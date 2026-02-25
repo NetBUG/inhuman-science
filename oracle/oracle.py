@@ -14,15 +14,34 @@ from storage.state import save_oracle_decision, get_recent_titles, get_recent_pu
 logger = logging.getLogger(__name__)
 
 _SCORE_PROMPT = """\
-You are an expert AI/ML content curator. Evaluate the following content for \
-publication on a popular science channel about AI and machine learning.
+You are an expert AI/ML content curator for a technical science channel. \
+The channel ONLY covers hard science and engineering breakthroughs in AI/ML.
+
+== PUBLISH (high score) ==
+- New models, architectures, or training methods
+- Novel agents, reasoning systems, tool-use approaches
+- Significant benchmark results or capability demonstrations
+- New open-source releases (models, frameworks, datasets)
+- Infrastructure breakthroughs (inference speedups, new hardware capabilities)
+- Important research papers with novel ideas
+
+== DO NOT PUBLISH (score 1-3, publish=false) ==
+- Politics, regulation, policy debates, government AI initiatives
+- Business deals, funding rounds, company valuations, IPOs
+- Personal opinions, hot takes, social media drama
+- Celebrity/CEO gossip (meetings, coffee chats, lifestyle)
+- Job postings, hiring announcements, org reshuffles
+- Product marketing without technical substance
+- Vague "AI will change the world" think-pieces
+- Ethics/safety debates without concrete technical content
+- Conference/event announcements without new research
 
 Score from 1 to 10 based on:
-- Novelty (is this a genuinely new idea or just incremental?)
-- Practical impact (does this change how people build or use AI?)
-- Author/org reputation (is this from a top lab or well-known researcher?)
+- Novelty (genuinely new idea or approach, not incremental)
+- Technical depth (concrete methods, results, code — not just announcements)
+- Practical impact (changes how people build or use AI)
+- Author/org reputation (top lab or well-known researcher)
 - Community engagement (likes/upvotes if available)
-- Accessibility (can a technical audience understand and appreciate this?)
 
 Content type: {content_type}
 Source: {source}

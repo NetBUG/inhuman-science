@@ -27,7 +27,7 @@ from processors.post_generator import (
     generate_blog_post_en,
     generate_tweet_summary_ru,
 )
-from publishers.telegram import send_post_with_image, send_error, send_status
+from publishers.telegram import send_post_with_image, send_document, send_error, send_status
 from publishers.twitter import post_tweet, retweet
 from storage.state import (
     is_paper_posted,
@@ -255,6 +255,39 @@ def run_twitter_pipeline() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Backup
+# ---------------------------------------------------------------------------
+
+def run_backup() -> None:
+    """Copy state.db to backups dir with date suffix, send to Telegram, prune old."""
+    import shutil
+
+    logger.info("=== DB backup started ===")
+    db = Path(config.DB_PATH)
+    if not db.exists():
+        logger.warning("No database file to back up")
+        return
+
+    backup_dir = Path(config.BACKUP_DIR)
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
+    today = time.strftime("%Y%m%d")
+    backup_path = backup_dir / f"state_{today}.db"
+    shutil.copy2(db, backup_path)
+    logger.info("DB backed up to %s", backup_path)
+
+    send_document(backup_path, caption=f"DB backup {today}")
+
+    cutoff = time.time() - config.BACKUP_KEEP_DAYS * 86400
+    for old in sorted(backup_dir.glob("state_*.db")):
+        if old.stat().st_mtime < cutoff:
+            old.unlink()
+            logger.info("Deleted old backup: %s", old.name)
+
+    logger.info("=== DB backup done ===")
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -270,13 +303,15 @@ def main() -> None:
             run_blogs_pipeline()
         elif cmd == "twitter":
             run_twitter_pipeline()
+        elif cmd == "backup":
+            run_backup()
         elif cmd == "all":
             run_papers_pipeline()
             run_blogs_pipeline()
             run_twitter_pipeline()
         else:
             print(f"Unknown command: {cmd}")
-            print("Usage: python main.py [papers|blogs|twitter|all|serve]")
+            print("Usage: python main.py [papers|blogs|twitter|backup|all]")
             sys.exit(1)
         return
 
@@ -286,16 +321,18 @@ def main() -> None:
     papers_cron = _parse_cron(config.SCHEDULE_PAPERS_CRON)
     blogs_cron = _parse_cron(config.SCHEDULE_BLOGS_CRON)
     twitter_cron = _parse_cron(config.SCHEDULE_TWITTER_CRON)
+    backup_cron = _parse_cron(config.SCHEDULE_BACKUP_CRON)
 
     scheduler.add_job(run_papers_pipeline, CronTrigger(timezone=tz, **papers_cron), id="papers")
     scheduler.add_job(run_blogs_pipeline, CronTrigger(timezone=tz, **blogs_cron), id="blogs")
     scheduler.add_job(run_twitter_pipeline, CronTrigger(timezone=tz, **twitter_cron), id="twitter")
+    scheduler.add_job(run_backup, CronTrigger(timezone=tz, **backup_cron), id="backup")
 
     scheduler.start()
     logger.info(
-        "Scheduler running (papers=%s, blogs=%s, twitter=%s, tz=%s)",
+        "Scheduler running (papers=%s, blogs=%s, twitter=%s, backup=%s, tz=%s)",
         config.SCHEDULE_PAPERS_CRON, config.SCHEDULE_BLOGS_CRON,
-        config.SCHEDULE_TWITTER_CRON, config.TIMEZONE,
+        config.SCHEDULE_TWITTER_CRON, config.SCHEDULE_BACKUP_CRON, config.TIMEZONE,
     )
 
     def _shutdown(signum, frame):

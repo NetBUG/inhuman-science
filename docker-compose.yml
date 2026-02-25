@@ -8,5 +8,6 @@ services:
       - ./state.db:/app/state.db
       - ./pdfs:/app/pdfs
       - ./images:/app/images
+      - ./backups:/app/backups
     environment:
       - PYTHONUNBUFFERED=1

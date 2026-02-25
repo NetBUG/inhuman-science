@@ -105,6 +105,32 @@ def _notify_error(text: str) -> None:
         logger.exception("Failed to send error notification")
 
 
+def send_document(file_path: Path, caption: str = "") -> bool:
+    """Send a file to the error chat (e.g. DB backups). Returns True on success."""
+    if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_ERROR_CHAT_ID:
+        return False
+    try:
+        url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendDocument"
+        with open(file_path, "rb") as f:
+            resp = requests.post(
+                url,
+                data={
+                    "chat_id": config.TELEGRAM_ERROR_CHAT_ID,
+                    "caption": caption[:1024] if caption else "",
+                },
+                files={"document": (file_path.name, f)},
+                timeout=60,
+            )
+        if resp.ok:
+            logger.info("Telegram document sent: %s", file_path.name)
+            return True
+        logger.error("Telegram sendDocument failed: %s", resp.text)
+        return False
+    except Exception:
+        logger.exception("Failed to send document %s", file_path.name)
+        return False
+
+
 def send_error(text: str) -> None:
     """Public helper for sending error notifications."""
     logger.error(text)
