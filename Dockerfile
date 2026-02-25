@@ -11,6 +11,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN mkdir -p pdfs images
+RUN mkdir -p pdfs images backups
 
 CMD ["python", "main.py"]

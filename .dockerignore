@@ -1,0 +1,9 @@
+.git
+.env
+state.db
+pdfs/
+images/
+backups/
+__pycache__
+*.pyc
+.cursor/
