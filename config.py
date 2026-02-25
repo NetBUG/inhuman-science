@@ -26,7 +26,14 @@ TWITTER_ACCESS_SECRET = os.getenv("TWITTER_ACCESS_SECRET", "placeholder-access-s
 
 TWITTER_MONITOR_USERS = [
     u.strip()
-    for u in os.getenv("TWITTER_MONITOR_USERS", "sama,ylecun,kaborov").split(",")
+    for u in os.getenv(
+        "TWITTER_MONITOR_USERS",
+        "sama,ylecun,karpathy,demishassabis,"
+        "JeffDean,mustafasuleyman,DarioAmodei,jackclarkSF,"
+        "arthurmensch,aidangomez,Yoshua_Bengio,drfeifei,"
+        "polynoamial,janleike,Thom_Wolf,ClementDelangue,soumithchintala,"
+        "OpenAI,GoogleDeepMind,AnthropicAI,AIatMeta,MistralAI,cohere,ByteDanceOSS",
+    ).split(",")
     if u.strip()
 ]
 
@@ -48,6 +55,14 @@ BLOG_FEEDS = {
     "openai": "https://openai.com/news/rss.xml",
     "anthropic": "https://anthropic.com/news/feed_anthropic.xml",
     "google_gemini": "https://blog.google/products/gemini/rss/",
+    "google_deepmind": "https://deepmind.google/blog/rss.xml",
+    "meta_ai": "https://engineering.fb.com/category/ai-research/feed/",
+    "microsoft_research": "https://www.microsoft.com/en-us/research/feed/",
+    "nvidia_tech": "https://developer.nvidia.com/blog/feed",
+    "amazon_science": "https://www.amazon.science/index.rss",
+    "ibm_research": "https://research.ibm.com/rss",
+    "apple_ml": "https://machinelearning.apple.com/rss.xml",
+    "pytorch": "https://pytorch.org/blog/feed.xml",
 }
 
 RSSHUB_BASE = "https://rsshub.app/twitter/user/"
