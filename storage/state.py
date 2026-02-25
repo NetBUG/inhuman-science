@@ -45,6 +45,16 @@ CREATE TABLE IF NOT EXISTS oracle_decisions (
     reason     TEXT,
     checked_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS published_summaries (
+    content_id   TEXT PRIMARY KEY,
+    content_type TEXT NOT NULL,
+    source_name  TEXT NOT NULL,
+    title        TEXT NOT NULL DEFAULT '',
+    summary      TEXT NOT NULL DEFAULT '',
+    score        REAL NOT NULL DEFAULT 0,
+    published_at TEXT NOT NULL
+);
 """
 
 
@@ -119,10 +129,20 @@ def mark_tweet_posted(
     get_conn().commit()
 
 
-def get_recent_titles(days: int = 3, limit: int = 30) -> list[str]:
+def get_recent_titles(days: int = 5, limit: int = 50) -> list[str]:
     """Get titles of recently published content across all sources."""
     conn = get_conn()
     cutoff = datetime.utcnow().isoformat()[:10]
+
+    rows = conn.execute(
+        "SELECT title, summary FROM published_summaries "
+        "WHERE published_at > date(?, '-' || ? || ' days') "
+        "ORDER BY published_at DESC LIMIT ?",
+        (cutoff, str(days), limit),
+    ).fetchall()
+    if rows:
+        return [r["title"] for r in rows if r["title"]]
+
     titles: list[str] = []
     for table in ("posted_papers", "posted_blogs"):
         rows = conn.execute(
@@ -131,13 +151,38 @@ def get_recent_titles(days: int = 3, limit: int = 30) -> list[str]:
             (cutoff, str(days), limit),
         ).fetchall()
         titles.extend(r["title"] for r in rows if r["title"])
+    return titles[:limit]
+
+
+def get_recent_published(days: int = 5, limit: int = 50) -> list[dict]:
+    """Get recently published content with title + summary for dedup."""
+    conn = get_conn()
+    cutoff = datetime.utcnow().isoformat()[:10]
     rows = conn.execute(
-        "SELECT tweet_url FROM posted_tweets WHERE posted_at > date(?, '-' || ? || ' days') "
-        "ORDER BY posted_at DESC LIMIT ?",
+        "SELECT content_id, content_type, source_name, title, summary "
+        "FROM published_summaries "
+        "WHERE published_at > date(?, '-' || ? || ' days') "
+        "ORDER BY published_at DESC LIMIT ?",
         (cutoff, str(days), limit),
     ).fetchall()
-    titles.extend(r["tweet_url"] for r in rows if r["tweet_url"])
-    return titles[:limit]
+    return [dict(r) for r in rows]
+
+
+def save_published_summary(
+    content_id: str,
+    content_type: str,
+    source_name: str,
+    title: str,
+    summary: str,
+    score: float = 0,
+) -> None:
+    """Store a summary of published content for future dedup checks."""
+    get_conn().execute(
+        "INSERT OR REPLACE INTO published_summaries VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (content_id, content_type, source_name, title,
+         summary[:500], score, datetime.utcnow().isoformat()),
+    )
+    get_conn().commit()
 
 
 def save_oracle_decision(

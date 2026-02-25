@@ -9,7 +9,7 @@ import requests
 import config
 from llm.client import oracle_score, fact_check
 from sources.base import ContentItem
-from storage.state import save_oracle_decision, get_recent_titles
+from storage.state import save_oracle_decision, get_recent_titles, get_recent_published
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +181,85 @@ def is_duplicate(item: ContentItem) -> tuple[bool, str]:
         logger.exception("Dedup check failed for %s", item.content_id)
 
     return False, ""
+
+
+_BATCH_DEDUP_PROMPT = """\
+You are deduplicating a batch of AI/ML content items before publication.
+
+== RECENTLY PUBLISHED (do NOT republish these topics) ==
+{recent_list}
+
+== NEW CANDIDATES ==
+{candidates_list}
+
+Instructions:
+1. Remove any candidate that covers the SAME specific news/announcement/paper \
+as a recently published item. Minor thematic overlap is fine — only remove if \
+it's literally the same news from a different source.
+2. Among the remaining candidates, group any that cover the same specific topic.
+3. From each group, keep ONLY the one with the highest score.
+4. Return the numbers of candidates to KEEP.
+
+Respond ONLY with valid JSON: {{"keep": [<list of candidate numbers to keep>]}}
+"""
+
+
+def deduplicate_batch(
+    candidates: list[tuple[ContentItem, float]],
+) -> list[tuple[ContentItem, float]]:
+    """Deduplicate candidates against history and each other in one LLM call.
+
+    Returns the filtered list of (item, score) tuples to publish.
+    """
+    if len(candidates) <= 1:
+        if not candidates:
+            return []
+        item, score = candidates[0]
+        dup, _ = is_duplicate(item)
+        return [] if dup else candidates
+
+    recent = get_recent_published(days=5, limit=50)
+    if recent:
+        recent_list = "\n".join(
+            f"- [{r['source_name']}] {r['title']}"
+            for r in recent if r.get("title")
+        )
+    else:
+        recent_titles = get_recent_titles(days=5, limit=50)
+        recent_list = "\n".join(f"- {t}" for t in recent_titles) if recent_titles else "(none)"
+
+    candidates_list = "\n".join(
+        f"{i+1}. [score={score:.1f}, source={item.source_name}] "
+        f"{item.title}\n   Summary: {item.summary[:200]}"
+        for i, (item, score) in enumerate(candidates)
+    )
+
+    prompt = _BATCH_DEDUP_PROMPT.format(
+        recent_list=recent_list or "(none)",
+        candidates_list=candidates_list,
+    )
+
+    try:
+        raw = oracle_score(prompt)
+        data = _parse_json(raw)
+        if data and "keep" in data:
+            keep_indices = set(int(x) - 1 for x in data["keep"])
+            result = [
+                candidates[i]
+                for i in sorted(keep_indices)
+                if 0 <= i < len(candidates)
+            ]
+            removed = len(candidates) - len(result)
+            if removed:
+                logger.info(
+                    "Batch dedup: %d candidates -> %d kept (%d removed)",
+                    len(candidates), len(result), removed,
+                )
+            return result
+    except Exception:
+        logger.exception("Batch dedup failed, keeping all candidates")
+
+    return candidates
 
 
 def _fetch_web_context(url: str) -> str:

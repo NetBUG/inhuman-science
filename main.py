@@ -17,7 +17,7 @@ import config
 from sources.alphaxiv import fetch_trending_papers
 from sources.blogs import fetch_blog_posts, fetch_full_blog_content
 from sources.twitter_feed import fetch_ai_leader_tweets
-from oracle.oracle import evaluate_content, verify_content, is_duplicate
+from oracle.oracle import evaluate_content, verify_content, deduplicate_batch
 from processors.pdf import download_pdf, extract_text
 from processors.images import extract_best_figure
 from processors.post_generator import (
@@ -36,6 +36,7 @@ from storage.state import (
     mark_blog_posted,
     is_tweet_posted,
     mark_tweet_posted,
+    save_published_summary,
 )
 
 logging.basicConfig(
@@ -63,28 +64,28 @@ def _parse_cron(expr: str) -> dict:
 
 def run_papers_pipeline() -> None:
     logger.info("=== Papers pipeline started ===")
+    published = 0
     try:
         papers = fetch_trending_papers(max_papers=config.ORACLE_MAX_PAPERS_PER_RUN * 3)
         logger.info("Fetched %d candidate papers from AlphaRxiv", len(papers))
 
-        published = 0
+        candidates: list[tuple] = []
         for item in papers:
-            if published >= config.ORACLE_MAX_PAPERS_PER_RUN:
-                break
             if is_paper_posted(item.content_id):
                 logger.debug("Already posted: %s", item.content_id)
                 continue
-
             score, should_publish, reason = evaluate_content(item)
             if not should_publish:
                 logger.info("Skipping (score=%.1f): %s", score, item.title[:60])
                 continue
+            candidates.append((item, score))
 
-            dup, dup_of = is_duplicate(item)
-            if dup:
-                logger.info("Skipping duplicate paper: %s ~ %s", item.title[:60], dup_of)
-                continue
+        candidates = deduplicate_batch(candidates)
+        logger.info("After dedup: %d candidates", len(candidates))
 
+        for item, score in candidates:
+            if published >= config.ORACLE_MAX_PAPERS_PER_RUN:
+                break
             try:
                 pdf_path = download_pdf(item.content_id, item.pdf_url)
                 paper_text = extract_text(pdf_path)
@@ -101,6 +102,10 @@ def run_papers_pipeline() -> None:
                     item.content_id, item.source_name, item.title,
                     tg_msg_id=tg_msg_id or "", tweet_id=tweet_id or "",
                 )
+                save_published_summary(
+                    item.content_id, item.source_type, item.source_name,
+                    item.title, item.summary, score,
+                )
                 published += 1
                 logger.info("Published paper: %s", item.title[:60])
 
@@ -112,9 +117,8 @@ def run_papers_pipeline() -> None:
         logger.exception("Papers pipeline crashed")
         send_error("Papers pipeline crashed")
 
-    n = published if "published" in dir() else 0
-    logger.info("=== Papers pipeline done (%d published) ===", n)
-    send_status(f"Papers pipeline done: {n} published")
+    logger.info("=== Papers pipeline done (%d published) ===", published)
+    send_status(f"Papers pipeline done: {published} published")
 
 
 # ---------------------------------------------------------------------------
@@ -123,14 +127,13 @@ def run_papers_pipeline() -> None:
 
 def run_blogs_pipeline() -> None:
     logger.info("=== Blogs pipeline started ===")
+    published = 0
     try:
         posts = fetch_blog_posts(max_age_days=3)
         logger.info("Fetched %d blog posts", len(posts))
 
-        published = 0
+        candidates: list[tuple] = []
         for item in posts:
-            if published >= config.ORACLE_MAX_BLOGS_PER_RUN:
-                break
             if is_blog_posted(item.content_id):
                 continue
 
@@ -149,11 +152,14 @@ def run_blogs_pipeline() -> None:
                 logger.warning("Blog fact-check failed: %s — %s", item.title[:60], issues)
                 continue
 
-            dup, dup_of = is_duplicate(item)
-            if dup:
-                logger.info("Skipping duplicate blog: %s ~ %s", item.title[:60], dup_of)
-                continue
+            candidates.append((item, score))
 
+        candidates = deduplicate_batch(candidates)
+        logger.info("After dedup: %d blog candidates", len(candidates))
+
+        for item, score in candidates:
+            if published >= config.ORACLE_MAX_BLOGS_PER_RUN:
+                break
             try:
                 source_label = item.source_name.replace("_", " ").title()
                 content = item.full_text or item.summary
@@ -167,6 +173,10 @@ def run_blogs_pipeline() -> None:
                     item.content_id, item.source_name, item.title,
                     tg_msg_id=tg_msg_id or "", tweet_id=tweet_id or "",
                 )
+                save_published_summary(
+                    item.content_id, item.source_type, item.source_name,
+                    item.title, item.summary, score,
+                )
                 published += 1
                 logger.info("Published blog: %s", item.title[:60])
 
@@ -178,9 +188,8 @@ def run_blogs_pipeline() -> None:
         logger.exception("Blogs pipeline crashed")
         send_error("Blogs pipeline crashed")
 
-    n = published if "published" in dir() else 0
-    logger.info("=== Blogs pipeline done (%d published) ===", n)
-    send_status(f"Blogs pipeline done: {n} published")
+    logger.info("=== Blogs pipeline done (%d published) ===", published)
+    send_status(f"Blogs pipeline done: {published} published")
 
 
 # ---------------------------------------------------------------------------
@@ -189,10 +198,12 @@ def run_blogs_pipeline() -> None:
 
 def run_twitter_pipeline() -> None:
     logger.info("=== Twitter monitoring pipeline started ===")
+    published = 0
     try:
         tweets = fetch_ai_leader_tweets(max_age_days=2)
         logger.info("Fetched %d tweets from AI leaders", len(tweets))
 
+        candidates: list[tuple] = []
         for item in tweets:
             if is_tweet_posted(item.content_id):
                 continue
@@ -206,11 +217,12 @@ def run_twitter_pipeline() -> None:
                 logger.warning("Tweet fact-check failed: %s", item.title[:60])
                 continue
 
-            dup, dup_of = is_duplicate(item)
-            if dup:
-                logger.info("Skipping duplicate tweet: %s ~ %s", item.title[:60], dup_of)
-                continue
+            candidates.append((item, score))
 
+        candidates = deduplicate_batch(candidates)
+        logger.info("After dedup: %d tweet candidates", len(candidates))
+
+        for item, score in candidates:
             try:
                 author = item.authors[0] if item.authors else item.source_name
                 post_ru = generate_tweet_summary_ru(author, item.summary)
@@ -223,6 +235,11 @@ def run_twitter_pipeline() -> None:
                     tg_msg_id=tg_msg_id or "",
                     our_tweet_id=rt_id or "",
                 )
+                save_published_summary(
+                    item.content_id, item.source_type, item.source_name,
+                    item.title, item.summary, score,
+                )
+                published += 1
                 logger.info("Published tweet summary: %s (rt=%s)", item.title[:60], rt_id)
 
             except Exception:
@@ -233,8 +250,8 @@ def run_twitter_pipeline() -> None:
         logger.exception("Twitter pipeline crashed")
         send_error("Twitter pipeline crashed")
 
-    logger.info("=== Twitter monitoring pipeline done ===")
-    send_status("Twitter monitoring pipeline done")
+    logger.info("=== Twitter pipeline done (%d published) ===", published)
+    send_status(f"Twitter pipeline done: {published} published")
 
 
 # ---------------------------------------------------------------------------
