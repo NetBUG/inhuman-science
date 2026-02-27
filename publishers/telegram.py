@@ -20,6 +20,25 @@ def _sanitize_html(text: str) -> str:
     return text
 
 
+def _trim_to_limit(text: str, limit: int) -> str:
+    """Trim text at the last paragraph or sentence boundary within limit."""
+    if len(text) <= limit:
+        return text
+
+    truncated = text[:limit]
+
+    para_break = truncated.rfind("\n\n")
+    if para_break > limit // 2:
+        return truncated[:para_break]
+
+    for sep in (". ", "! ", "? "):
+        sent_break = truncated.rfind(sep)
+        if sent_break > limit // 2:
+            return truncated[:sent_break + 1]
+
+    return truncated
+
+
 def send_post_with_image(
     text: str,
     image_path: Path | None = None,
@@ -35,9 +54,10 @@ def send_post_with_image(
         caption += f"\n\n{link}"
 
     if image_path and image_path.exists():
+        caption = _trim_to_limit(caption, 1024)
         return _send_photo(caption, image_path)
-    else:
-        return _send_text(caption)
+
+    return _send_text(caption)
 
 
 def _send_photo(caption: str, image_path: Path) -> str | None:
