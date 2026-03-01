@@ -1,5 +1,7 @@
 # Inhuman Science
 
+[Telegram](https://t.me/InhumanScience) | [Twitter/X](https://x.com/inhumanscience)
+
 Automated AI/ML content curation and publishing pipeline. Aggregates papers, blog posts, and tweets from the AI world, evaluates them with LLMs, and publishes the best finds to Telegram and Twitter/X.
 
 ## How It Works
