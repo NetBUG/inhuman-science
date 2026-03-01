@@ -4,15 +4,23 @@ Automated AI/ML content curation and publishing pipeline. Aggregates papers, blo
 
 ## How It Works
 
-The system runs three independent pipelines on a configurable cron schedule:
+The system runs four scheduled jobs (cron-based, timezone-aware):
 
-**Papers** — scrapes trending papers from [AlphaXiv](https://www.alphaxiv.org), scores them with an LLM oracle, downloads PDFs, extracts the most representative figure using a vision model, generates bilingual posts (Russian for Telegram, English for Twitter), and publishes.
+**Papers (10:00)** — scrapes trending papers from [AlphaXiv](https://www.alphaxiv.org), scores them with an LLM oracle, downloads PDFs, extracts the most representative figure using a vision model, generates bilingual posts (Russian for Telegram, English for Twitter), and publishes.
 
-**Blogs** — fetches RSS feeds from OpenAI, Anthropic, and Google Gemini blogs, scores and fact-checks each post, generates summaries, and publishes.
+**Blogs (12:00)** — fetches RSS feeds from 11 sources (OpenAI, Anthropic, Google Gemini, Google DeepMind, Meta AI, Microsoft Research, NVIDIA Tech, Amazon Science, IBM Research, Apple ML, PyTorch), scores and fact-checks each post, generates summaries, and publishes.
 
-**Twitter** — monitors tweets from configurable AI leaders (e.g. Sam Altman, Yann LeCun), scores them, generates Russian summaries for Telegram, and retweets on Twitter.
+**Twitter (14:00)** — monitors 25 accounts: AI lab leaders (Demis Hassabis, Jeff Dean, Dario Amodei, etc.), top researchers (Yoshua Bengio, Fei-Fei Li, Noam Brown, Jan Leike), open-source leads (Thomas Wolf, Clément Delangue, Soumith Chintala), and official accounts (OpenAI, DeepMind, Anthropic, Meta AI, Mistral, Cohere, ByteDance OSS). Scores tweets, generates Russian summaries for Telegram, retweets on Twitter.
 
-Every pipeline checks for duplicates against recently published content, tracks all decisions in SQLite, and sends error notifications to a dedicated Telegram chat.
+**Backup (03:00)** — daily SQLite dump to `backups/` with Telegram delivery. Keeps last 7 days.
+
+### Content Filtering
+
+The oracle is tuned for **pure science and engineering only**. It publishes new models, architectures, agents, benchmarks, open-source releases, and infrastructure breakthroughs. It rejects politics, business deals, gossip, marketing, and think-pieces.
+
+### Cross-Source Deduplication
+
+When the same news goes viral across multiple sources, a batch dedup step groups all scored candidates by topic in a single LLM call and keeps only the highest-scored item per group. This runs against both the current batch and the last 5 days of published content.
 
 ## Architecture
 
@@ -22,11 +30,11 @@ Sources                 Processing              Publishing
 │  AlphaXiv   │───┐    │  Oracle      │        │ Telegram  │
 │  (papers)   │   │    │  (scoring,   │   ┌───▶│ (RU post) │
 ├─────────────┤   │    │  fact-check, │   │    ├───────────┤
-│  RSS Feeds  │───┼───▶│  dedup)      │───┤    │ Twitter   │
-│  (blogs)    │   │    ├──────────────┤   └───▶│ (EN post) │
+│  RSS Feeds  │───┼───▶│  batch dedup)│───┤    │ Twitter   │
+│  (11 blogs) │   │    ├──────────────┤   └───▶│ (EN post) │
 ├─────────────┤   │    │  Processors  │        └───────────┘
 │  Twitter    │───┘    │  (PDF, image,│              │
-│  (tweets)   │        │  post gen)   │              ▼
+│  (25 accts) │        │  post gen)   │              ▼
 └─────────────┘        └──────────────┘        ┌───────────┐
                                                │  SQLite   │
                                                │  (state)  │
@@ -38,18 +46,19 @@ Sources                 Processing              Publishing
 ```
 ├── main.py                 # Entry point, scheduler, pipeline orchestration
 ├── config.py               # Configuration and environment variables
-├── requirements.txt        # Python dependencies
+├── Makefile                # Convenience commands (deploy, logs, backup, etc.)
+├── requirements.txt
 ├── Dockerfile
 ├── docker-compose.yml
 │
 ├── sources/
 │   ├── base.py             # ContentItem dataclass
 │   ├── alphaxiv.py         # AlphaXiv trending papers scraper
-│   ├── blogs.py            # RSS feed parser (OpenAI, Anthropic, Google)
+│   ├── blogs.py            # RSS feed parser
 │   └── twitter_feed.py     # Twitter API v2 feed reader
 │
 ├── oracle/
-│   └── oracle.py           # LLM-based scoring, fact-checking, deduplication
+│   └── oracle.py           # LLM scoring, fact-checking, batch deduplication
 │
 ├── processors/
 │   ├── pdf.py              # PDF download and text extraction
@@ -74,20 +83,11 @@ Sources                 Processing              Publishing
 - Python 3.11+
 - API keys: [OpenRouter](https://openrouter.ai/), Telegram Bot, Twitter/X
 
-### Installation
-
-```bash
-git clone <repo-url>
-cd inhuman-science
-pip install -r requirements.txt
-```
-
 ### Configuration
-
-Copy the example environment file and fill in your credentials:
 
 ```bash
 cp .env.example .env
+# Fill in API keys
 ```
 
 #### Required variables
@@ -110,41 +110,41 @@ cp .env.example .env
 | `SCHEDULE_PAPERS_CRON` | `0 10 * * *` | Papers pipeline schedule |
 | `SCHEDULE_BLOGS_CRON` | `0 12 * * *` | Blogs pipeline schedule |
 | `SCHEDULE_TWITTER_CRON` | `0 14 * * *` | Twitter pipeline schedule |
-| `TWITTER_MONITOR_USERS` | `sama,ylecun,kaborov` | Comma-separated Twitter usernames to monitor |
+| `SCHEDULE_BACKUP_CRON` | `0 3 * * *` | DB backup schedule |
+| `TWITTER_MONITOR_USERS` | 25 accounts | Comma-separated Twitter usernames |
 | `ORACLE_MIN_SCORE` | `7` | Minimum LLM score (1-10) to publish |
 | `ORACLE_MAX_PAPERS_PER_RUN` | `5` | Max papers published per run |
 | `ORACLE_MAX_BLOGS_PER_RUN` | `3` | Max blog posts published per run |
+| `BACKUP_DIR` | `backups` | Directory for DB backups |
+| `BACKUP_KEEP_DAYS` | `7` | Days to retain backups |
 | `TIMEZONE` | `Europe/Moscow` | Timezone for scheduling |
-| `DB_PATH` | `state.db` | SQLite database path |
-| `PDF_DIR` | `pdfs` | Directory for downloaded PDFs |
-| `IMG_DIR` | `images` | Directory for extracted images |
 
 ## Usage
 
-### Run a single pipeline
+### Docker (recommended)
 
 ```bash
-python main.py papers     # Papers pipeline
-python main.py blogs      # Blogs pipeline
-python main.py twitter    # Twitter pipeline
-python main.py all        # All pipelines sequentially
+make deploy     # Build and start
+make logs       # Follow logs
+make stop       # Stop
+make restart    # Restart
+make update     # git pull + rebuild
+make backup     # Manual DB backup
+make status     # Container status
 ```
 
-### Run the scheduler
+### Manual
 
 ```bash
-python main.py
+pip install -r requirements.txt
+
+python main.py              # Start scheduler (runs forever)
+python main.py papers       # Single papers run
+python main.py blogs        # Single blogs run
+python main.py twitter      # Single twitter run
+python main.py backup       # Manual backup
+python main.py all          # All pipelines sequentially
 ```
-
-Without arguments the app starts a background scheduler that triggers each pipeline at its configured cron time and keeps running indefinitely.
-
-### Docker
-
-```bash
-docker-compose up -d
-```
-
-The compose file mounts `state.db`, `pdfs/`, and `images/` as volumes so state persists across container restarts.
 
 ## LLM Models
 
@@ -159,9 +159,10 @@ All LLM calls go through [OpenRouter](https://openrouter.ai/). Models are config
 
 ## Data Storage
 
-SQLite database (`state.db`) with four tables:
+SQLite database (`state.db`) with five tables:
 
 - **posted_papers** — published papers (arxiv ID, title, timestamp)
 - **posted_blogs** — published blog posts (URL, title, timestamp)
-- **posted_tweets** — published tweets (tweet ID, author, timestamp)
+- **posted_tweets** — published tweets (tweet URL, author, timestamp)
 - **oracle_decisions** — all scoring decisions with scores and reasoning
+- **published_summaries** — title + summary of all published content for cross-source dedup
