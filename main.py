@@ -15,6 +15,7 @@ import pytz
 
 import config
 from sources.alphaxiv import fetch_trending_papers
+from sources.huggingface import fetch_hf_daily_papers
 from sources.blogs import fetch_blog_posts, fetch_full_blog_content
 from sources.twitter_feed import fetch_ai_leader_tweets
 from oracle.oracle import evaluate_content, verify_content, deduplicate_batch
@@ -66,13 +67,24 @@ def run_papers_pipeline() -> None:
     logger.info("=== Papers pipeline started ===")
     published = 0
     try:
-        papers = fetch_trending_papers(max_papers=config.ORACLE_MAX_PAPERS_PER_RUN * 3)
-        logger.info("Fetched %d candidate papers from AlphaRxiv", len(papers))
+        alphaxiv = fetch_trending_papers(max_papers=config.ORACLE_MAX_PAPERS_PER_RUN * 3)
+        logger.info("Fetched %d papers from AlphaXiv", len(alphaxiv))
+
+        hf_papers = fetch_hf_daily_papers(min_upvotes=config.HF_DAILY_MIN_UPVOTES)
+        logger.info("Fetched %d papers from HF Daily Papers", len(hf_papers))
+
+        seen_ids: set[str] = set()
+        all_papers: list = []
+        for p in alphaxiv + hf_papers:
+            if p.content_id not in seen_ids:
+                seen_ids.add(p.content_id)
+                all_papers.append(p)
+        logger.info("Combined: %d unique papers", len(all_papers))
 
         candidates: list[tuple] = []
-        for item in papers:
+        for item in all_papers:
             if is_paper_posted(item.content_id):
-                logger.debug("Already posted: %s", item.content_id)
+                logger.info("Already posted: %s [%s]", item.content_id, item.source_name)
                 continue
             score, should_publish, reason = evaluate_content(item)
             if not should_publish:
@@ -81,6 +93,7 @@ def run_papers_pipeline() -> None:
             candidates.append((item, score))
 
         candidates = deduplicate_batch(candidates)
+        candidates.sort(key=lambda x: x[1], reverse=True)
         logger.info("After dedup: %d candidates", len(candidates))
 
         for item, score in candidates:
