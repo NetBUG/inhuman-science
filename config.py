@@ -46,7 +46,7 @@ BACKUP_DIR = os.getenv("BACKUP_DIR", "backups")
 BACKUP_KEEP_DAYS = int(os.getenv("BACKUP_KEEP_DAYS", "7"))
 
 ORACLE_MIN_SCORE = int(os.getenv("ORACLE_MIN_SCORE", "7"))
-ORACLE_MAX_PAPERS_PER_RUN = int(os.getenv("ORACLE_MAX_PAPERS_PER_RUN", "5"))
+ORACLE_MAX_PAPERS_PER_RUN = int(os.getenv("ORACLE_MAX_PAPERS_PER_RUN", "3"))
 ORACLE_MAX_BLOGS_PER_RUN = int(os.getenv("ORACLE_MAX_BLOGS_PER_RUN", "3"))
 
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Moscow")
@@ -54,6 +54,8 @@ TIMEZONE = os.getenv("TIMEZONE", "Europe/Moscow")
 ALPHAXIV_HOT_URL = "https://www.alphaxiv.org/?sort=Hot"
 ALPHAXIV_LIKES_URL = "https://www.alphaxiv.org/?sort=Likes"
 ARXIV_PDF_BASE = "https://arxiv.org/pdf/"
+
+HF_DAILY_MIN_UPVOTES = int(os.getenv("HF_DAILY_MIN_UPVOTES", "10"))
 
 BLOG_FEEDS = {
     "openai": "https://openai.com/news/rss.xml",
